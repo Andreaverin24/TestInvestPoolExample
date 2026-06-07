@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.35;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -10,11 +10,20 @@ interface IEthStrategy {
 }
 
 /**
- * @title EthInvestmentPool
- * @notice ERC20 LP-token based ETH investment pool for assessment/demo use.
+ * @title  EthInvestmentPool by Averin
+ * @notice ERC20 LP-token based Ethereum investment pool.
  *
- * Users deposit ETH and receive LP tokens. Returns are simulated in the strategy:
- * when strategy holdings grow, each LP token represents more ETH.
+ * Model:
+ * - Users deposit ETH.
+ * - Pool mints ERC20 LP tokens based on current totalHoldings.
+ * - ETH is forwarded to strategy.
+ * - Strategy reports totalHoldings.
+ * - If strategy profit increases totalHoldings, LP price increases.
+ * - New users receive fewer LP tokens after profit.
+ * - Withdraw burns LP tokens and returns proportional ETH value.
+ *
+ * This is a Sepolia assessment/demo contract.
+ * It is not audited and must not be used with real funds.
  */
 contract EthInvestmentPool is ERC20 {
     uint256 public constant PRECISION = 1e18;
@@ -40,6 +49,7 @@ contract EthInvestmentPool is ERC20 {
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event StrategyUpdated(address indexed oldStrategy, address indexed newStrategy);
+
     event Deposited(
         address indexed investor,
         uint256 assets,
@@ -48,6 +58,7 @@ contract EthInvestmentPool is ERC20 {
         uint256 totalHoldingsAfter,
         uint256 totalSupplyAfter
     );
+
     event Withdrawn(
         address indexed investor,
         uint256 assets,
@@ -75,7 +86,9 @@ contract EthInvestmentPool is ERC20 {
         locked = 0;
     }
 
-    constructor(address strategyAddress) ERC20("Test ETH InvPool LP", "TeETH-LP") {
+    constructor(address strategyAddress)
+        ERC20("Test ETH InvPool LP", "TeETH-LP")
+    {
         if (strategyAddress == address(0)) revert InvalidAddress();
 
         owner = msg.sender;
@@ -85,11 +98,16 @@ contract EthInvestmentPool is ERC20 {
         emit StrategyUpdated(address(0), strategyAddress);
     }
 
+    /**
+     * @notice Deposit ETH and receive ERC20 LP tokens.
+     * @dev    LP shares are calculated using totalHoldings BEFORE the new deposit.
+     */
     function deposit() external payable nonReentrant {
         if (msg.value == 0) revert ZeroAmount();
 
         uint256 assets = msg.value;
         uint256 holdingsBefore = totalHoldings();
+
         uint256 mintedShares = _previewDepositWithHoldings(assets, holdingsBefore);
 
         Investor storage investor = investors[msg.sender];
@@ -102,53 +120,95 @@ contract EthInvestmentPool is ERC20 {
 
         investor.deposited += assets;
         investor.lastActionAt = block.timestamp;
+
         totalDeposited += assets;
 
         _mint(msg.sender, mintedShares);
+
         strategy.deposit{value: assets}();
 
-        emit Deposited(msg.sender, assets, mintedShares, lpPrice(), totalHoldings(), totalSupply());
+        emit Deposited(
+            msg.sender,
+            assets,
+            mintedShares,
+            lpPrice(),
+            totalHoldings(),
+            totalSupply()
+        );
     }
 
+    /**
+     * @notice Withdraw ETH by burning ERC20 LP tokens.
+     * @param shares Amount of LP tokens to burn.
+     */
     function withdraw(uint256 shares) external nonReentrant {
         if (shares == 0) revert ZeroAmount();
 
         uint256 assets = previewRedeem(shares);
+
         Investor storage investor = investors[msg.sender];
 
         investor.withdrawn += assets;
         investor.lastActionAt = block.timestamp;
+
         totalWithdrawn += assets;
 
         _burn(msg.sender, shares);
+
         strategy.withdraw(assets, msg.sender);
 
-        emit Withdrawn(msg.sender, assets, shares, lpPrice(), totalHoldings(), totalSupply());
+        emit Withdrawn(
+            msg.sender,
+            assets,
+            shares,
+            lpPrice(),
+            totalHoldings(),
+            totalSupply()
+        );
     }
 
+    /**
+     * @notice Withdraw all LP-token balance.
+     */
     function withdrawAll() external nonReentrant {
         uint256 shares = balanceOf(msg.sender);
         if (shares == 0) revert ZeroAmount();
 
         uint256 assets = previewRedeem(shares);
+
         Investor storage investor = investors[msg.sender];
 
         investor.withdrawn += assets;
         investor.lastActionAt = block.timestamp;
+
         totalWithdrawn += assets;
 
         _burn(msg.sender, shares);
+
         strategy.withdraw(assets, msg.sender);
 
-        emit Withdrawn(msg.sender, assets, shares, lpPrice(), totalHoldings(), totalSupply());
+        emit Withdrawn(
+            msg.sender,
+            assets,
+            shares,
+            lpPrice(),
+            totalHoldings(),
+            totalSupply()
+        );
     }
 
+    /**
+     * @notice Preview how many LP tokens will be minted for ETH deposit.
+     */
     function previewDeposit(uint256 assets) public view returns (uint256 shares) {
         if (assets == 0) revert ZeroAmount();
 
         return _previewDepositWithHoldings(assets, totalHoldings());
     }
 
+    /**
+     * @notice Preview how much ETH will be returned for burning LP tokens.
+     */
     function previewRedeem(uint256 shares) public view returns (uint256 assets) {
         if (shares == 0) revert ZeroAmount();
 
@@ -158,10 +218,19 @@ contract EthInvestmentPool is ERC20 {
         return (shares * totalHoldings()) / supply;
     }
 
+    /**
+     * @notice Current pool value according to strategy accounting.
+     */
     function totalHoldings() public view returns (uint256) {
         return strategy.totalHoldings();
     }
 
+    /**
+     * @notice LP token price scaled by 1e18.
+     *
+     * 1e18 = 1 ETH per 1 LP token.
+     * 2e18 = 2 ETH per 1 LP token.
+     */
     function lpPrice() public view returns (uint256) {
         uint256 supply = totalSupply();
 
@@ -172,6 +241,9 @@ contract EthInvestmentPool is ERC20 {
         return (totalHoldings() * PRECISION) / supply;
     }
 
+    /**
+     * @notice Current ETH value of user's LP-token balance.
+     */
     function balanceOfAssets(address investorAddress) public view returns (uint256) {
         uint256 shares = balanceOf(investorAddress);
         uint256 supply = totalSupply();
@@ -183,6 +255,9 @@ contract EthInvestmentPool is ERC20 {
         return (shares * totalHoldings()) / supply;
     }
 
+    /**
+     * @notice Full investor info.
+     */
     function getInvestor(address investorAddress)
         external
         view
@@ -217,6 +292,10 @@ contract EthInvestmentPool is ERC20 {
         return investorList[index];
     }
 
+    /**
+     * @notice Update strategy address.
+     * @dev    For assessment/demo only. Production version needs stricter migration logic.
+     */
     function setStrategy(address newStrategy) external onlyOwner {
         if (newStrategy == address(0)) revert InvalidAddress();
 

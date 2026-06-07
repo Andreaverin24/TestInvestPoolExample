@@ -1,0 +1,24 @@
+{
+  "name": "eth-investment-pool-assessment",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "compile": "node scripts/compile.mjs",
+    "deploy": "node scripts/deploy.mjs",
+    "interact": "node scripts/interact.mjs",
+    "dev": "vite --host 127.0.0.1",
+    "build": "npm run compile && vite build",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.2.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "ethers": "^6.13.5",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "solc": "^0.8.30",
+    "vite": "^6.0.11"
+  },
+  "devDependencies": {}
+}

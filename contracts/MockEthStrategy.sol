@@ -1,13 +1,26 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.35;
 
 /**
- * @title MockEthStrategy
- * @notice Mock ETH strategy for assessment/demo deployments.
+ * @title  MockEthStrategy
+ * @notice Mock ETH strategy for Sepolia assessment/demo.
  *
- * The strategy receives real ETH deposits from the pool. `simulateProfit`
- * increases accounting profit so the UI can demonstrate return distribution.
- * Large withdrawals require the strategy to hold enough real ETH.
+ * Important model:
+ * - The strategy receives real ETH deposits from the pool.
+ * - simulateProfit(uint256 amount) only increases virtual/accounting profit.
+ * - totalHoldings() returns real ETH balance + virtual simulated profit.
+ *
+ * This allows the pool to demonstrate LP-share issuance based on totalHoldings.
+ *
+ * Example:
+ * - Pool deposits 1 ETH into strategy.
+ * - totalHoldings = 1 ETH.
+ * - Owner calls simulateProfit(1 ETH).
+ * - totalHoldings = 2 ETH.
+ * - Next deposit mints fewer LP shares because LP price increased.
+ *
+ * This is not a real yield strategy.
+ * It is only a controlled mock strategy for testing accounting logic.
  */
 contract MockEthStrategy {
     address public owner;
@@ -15,12 +28,19 @@ contract MockEthStrategy {
 
     uint256 public totalDeposited;
     uint256 public totalWithdrawn;
+
+    /**
+     * @notice Virtual profit used only for accounting demonstration.
+     * @dev    It is not backed by actual ETH unless the strategy is funded separately.
+     */
     uint256 public simulatedProfit;
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event PoolUpdated(address indexed oldPool, address indexed newPool);
+
     event DepositedFromPool(address indexed pool, uint256 amount);
     event WithdrawnToReceiver(address indexed receiver, uint256 amount);
+
     event ProfitSimulated(address indexed operator, uint256 addedProfit, uint256 totalSimulatedProfit);
 
     error NotOwner();
@@ -42,6 +62,7 @@ contract MockEthStrategy {
 
     constructor() {
         owner = msg.sender;
+
         emit OwnershipTransferred(address(0), msg.sender);
     }
 
@@ -54,6 +75,9 @@ contract MockEthStrategy {
         emit PoolUpdated(oldPool, newPool);
     }
 
+    /**
+     * @notice Receive ETH deposit from pool.
+     */
     function deposit() external payable onlyPool {
         if (msg.value == 0) revert ZeroAmount();
 
@@ -62,6 +86,10 @@ contract MockEthStrategy {
         emit DepositedFromPool(msg.sender, msg.value);
     }
 
+    /**
+     * @notice Withdraw real ETH to receiver.
+     * @dev If simulatedProfit is not backed by real ETH, large withdrawals may fail.
+     */
     function withdraw(uint256 amount, address receiver) external onlyPool {
         if (amount == 0) revert ZeroAmount();
         if (receiver == address(0)) revert InvalidAddress();
@@ -75,6 +103,13 @@ contract MockEthStrategy {
         emit WithdrawnToReceiver(receiver, amount);
     }
 
+    /**
+     * @notice Simulate strategy profit by increasing accounting profit.
+     * @param amount Amount of virtual profit to add.
+     *
+     * Example:
+     * simulateProfit(1 ether) increases totalHoldings() by 1 ETH.
+     */
     function simulateProfit(uint256 amount) external onlyOwner {
         if (amount == 0) revert ZeroAmount();
 
@@ -83,10 +118,19 @@ contract MockEthStrategy {
         emit ProfitSimulated(msg.sender, amount, simulatedProfit);
     }
 
+    /**
+     * @notice Total strategy assets used by the pool for LP-share accounting.
+     *
+     * For this mock:
+     * totalHoldings = real ETH balance + virtual simulated profit.
+     */
     function totalHoldings() external view returns (uint256) {
         return address(this).balance + simulatedProfit;
     }
 
+    /**
+     * @notice Real ETH balance held by strategy.
+     */
     function realBalance() external view returns (uint256) {
         return address(this).balance;
     }
@@ -100,5 +144,9 @@ contract MockEthStrategy {
         emit OwnershipTransferred(previousOwner, newOwner);
     }
 
+    /**
+     * @notice Allows funding the strategy with real ETH if needed for withdrawal demos.
+     * @dev This does not increase simulatedProfit because balance already affects totalHoldings().
+     */
     receive() external payable {}
 }
